@@ -16,12 +16,83 @@ body {
 }
 
 header {
+  position: relative;
   text-align: center;
   padding: 20px 0;
   margin-bottom: 30px;
   background-color: #1a237e;
   color: white;
   border-radius: 5px;
+}
+
+.account-area {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+#account-button {
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 50%;
+  background: transparent;
+  color: white;
+  font-size: 20px;
+}
+
+.account-menu {
+  position: absolute;
+  z-index: 2;
+  top: 48px;
+  right: 0;
+  min-width: 150px;
+  padding: 6px;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
+}
+
+.account-menu button {
+  width: 100%;
+  background: white;
+  color: #333;
+  text-align: left;
+}
+
+.account-menu button:hover {
+  background: #f1f3f5;
+}
+
+.modal-backdrop {
+  position: fixed;
+  z-index: 10;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.48);
+}
+
+.modal-backdrop section {
+  position: relative;
+  width: min(100%, 420px);
+}
+
+.modal-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  padding: 4px 10px;
+}
+
+#teacher-message {
+  align-self: flex-start;
+  max-width: 500px;
+  padding: 16px;
+  color: #555;
 }
 
 header h1 {
@@ -190,6 +261,20 @@ button:hover {
 
 .hidden {
   display: none;
+}
+
+@media (max-width: 600px) {
+  header {
+    padding: 56px 12px 20px;
+  }
+
+  header h1 {
+    font-size: 24px;
+  }
+
+  header h2 {
+    font-size: 18px;
+  }
 }
 
 footer {

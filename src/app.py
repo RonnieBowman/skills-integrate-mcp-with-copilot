@@ -5,9 +5,16 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+import base64
+import hashlib
+import hmac
+import json
+import secrets
+import time
+from fastapi import FastAPI, HTTPException, Depends, Cookie, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 import os
 from pathlib import Path
 
@@ -18,6 +25,111 @@ app = FastAPI(title="Mergington High School API",
 current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
+
+TEACHERS_FILE = Path(os.environ.get("TEACHERS_FILE", current_dir / "teachers.json"))
+SESSION_COOKIE_NAME = "teacher_session"
+SESSION_TTL_SECONDS = 8 * 60 * 60
+SESSION_SECRET = os.environ.get("SESSION_SECRET", secrets.token_urlsafe(32)).encode("utf-8")
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+def load_teachers():
+    try:
+        data = json.loads(TEACHERS_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=500, detail="Teacher account file is invalid") from exc
+
+    return {
+        teacher["username"]: teacher["password_hash"]
+        for teacher in data.get("teachers", [])
+        if isinstance(teacher, dict)
+        and isinstance(teacher.get("username"), str)
+        and isinstance(teacher.get("password_hash"), str)
+    }
+
+
+def verify_password(password, stored_hash):
+    try:
+        algorithm, iterations, salt, expected = stored_hash.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        actual = hashlib.pbkdf2_hmac(
+            "sha256", password.encode("utf-8"), salt.encode("utf-8"), int(iterations)
+        ).hex()
+        return hmac.compare_digest(actual, expected)
+    except (ValueError, TypeError):
+        return False
+
+
+def create_session(username):
+    payload = json.dumps(
+        {"username": username, "expires": int(time.time()) + SESSION_TTL_SECONDS},
+        separators=(",", ":"),
+    ).encode("utf-8")
+    encoded = base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
+    signature = hmac.new(SESSION_SECRET, encoded.encode("ascii"), hashlib.sha256).digest()
+    encoded_signature = base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
+    return f"{encoded}.{encoded_signature}"
+
+
+def get_current_teacher(teacher_session: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME)):
+    if not teacher_session:
+        raise HTTPException(status_code=401, detail="Teacher sign-in required")
+
+    try:
+        encoded, supplied_signature = teacher_session.split(".", 1)
+        expected_signature = base64.urlsafe_b64encode(
+            hmac.new(SESSION_SECRET, encoded.encode("ascii"), hashlib.sha256).digest()
+        ).rstrip(b"=").decode("ascii")
+        if not hmac.compare_digest(supplied_signature, expected_signature):
+            raise ValueError("Invalid signature")
+        payload = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        session = json.loads(payload)
+        username = session["username"]
+        if session["expires"] <= int(time.time()) or username not in load_teachers():
+            raise ValueError("Expired or revoked session")
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+        raise HTTPException(status_code=401, detail="Teacher session is invalid or expired")
+
+    return username
+
+
+@app.post("/auth/login")
+def teacher_login(credentials: LoginRequest, response: Response):
+    password_hash = load_teachers().get(credentials.username)
+    if not password_hash or not verify_password(credentials.password, password_hash):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=create_session(credentials.username),
+        max_age=SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=os.environ.get("COOKIE_SECURE", "false").lower() == "true",
+        samesite="lax",
+    )
+    return {"authenticated": True, "username": credentials.username}
+
+
+@app.post("/auth/logout")
+def teacher_logout(response: Response):
+    response.delete_cookie(key=SESSION_COOKIE_NAME, httponly=True, samesite="lax")
+    return {"authenticated": False}
+
+
+@app.get("/auth/me")
+def teacher_status(teacher_session: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME)):
+    try:
+        username = get_current_teacher(teacher_session)
+    except HTTPException:
+        return {"authenticated": False}
+    return {"authenticated": True, "username": username}
 
 # In-memory activity database
 activities = {
@@ -89,7 +201,7 @@ def get_activities():
 
 
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
+def signup_for_activity(activity_name: str, email: str, teacher: str = Depends(get_current_teacher)):
     """Sign up a student for an activity"""
     # Validate activity exists
     if activity_name not in activities:
@@ -111,7 +223,7 @@ def signup_for_activity(activity_name: str, email: str):
 
 
 @app.delete("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
+def unregister_from_activity(activity_name: str, email: str, teacher: str = Depends(get_current_teacher)):
     """Unregister a student from an activity"""
     # Validate activity exists
     if activity_name not in activities:

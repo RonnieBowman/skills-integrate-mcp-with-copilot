@@ -48,3 +48,15 @@ The application uses a simple data model with meaningful identifiers:
    - Grade level
 
 All data is stored in memory, which means data will be reset when the server restarts.
+
+## Teacher access
+
+Only signed-in teachers can register or remove students. Activity listings and participant lists remain public. Teacher accounts are stored in `src/teachers.json`; passwords are stored as PBKDF2 hashes, and the credential file is ignored by Git.
+
+Create or update a teacher account with:
+
+```
+python src/manage_teachers.py teacher-username
+```
+
+The script prompts for the assigned password without displaying it. Set `SESSION_SECRET` to a stable random secret before deployment so teacher sessions remain verifiable after application restarts. Set `COOKIE_SECURE=true` when serving over HTTPS.
